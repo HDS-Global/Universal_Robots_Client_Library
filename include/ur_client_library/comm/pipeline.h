@@ -21,6 +21,7 @@
 #pragma once
 
 #include "ur_client_library/comm/package.h"
+#include "ur_client_library/exceptions.h"
 #include "ur_client_library/log.h"
 #include "ur_client_library/helpers.h"
 #include "ur_client_library/queue/readerwriterqueue.h"
@@ -438,22 +439,37 @@ private:
     std::vector<std::unique_ptr<T>> products;
     while (running_)
     {
-      if (!producer_.tryGet(products))
+      // A malformed/short package makes the parser throw (BinParser::peek).
+      // Without this guard the exception would unwind out of this thread
+      // function and the runtime would call std::terminate(), aborting the
+      // whole process. Instead, log it and end the producer cleanly so
+      // downstream code (notifier_.stopped) can react and reconnect.
+      try
       {
+        if (!producer_.tryGet(products))
+        {
+          producer_.teardownProducer();
+          running_ = false;
+          break;
+        }
+
+        for (auto& p : products)
+        {
+          if (!queue_.tryEnqueue(std::move(p)))
+          {
+            URCL_LOG_ERROR("Pipeline producer overflowed! <%s>", name_.c_str());
+          }
+        }
+
+        products.clear();
+      }
+      catch (const UrException& e)
+      {
+        URCL_LOG_ERROR("Pipeline producer <%s> caught exception, stopping producer: %s", name_.c_str(), e.what());
         producer_.teardownProducer();
         running_ = false;
         break;
       }
-
-      for (auto& p : products)
-      {
-        if (!queue_.tryEnqueue(std::move(p)))
-        {
-          URCL_LOG_ERROR("Pipeline producer overflowed! <%s>", name_.c_str());
-        }
-      }
-
-      products.clear();
     }
     URCL_LOG_DEBUG("Pipeline producer ended! <%s>", name_.c_str());
     notifier_.stopped(name_);
