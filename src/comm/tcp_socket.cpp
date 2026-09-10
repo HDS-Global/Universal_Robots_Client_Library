@@ -115,12 +115,24 @@ bool TCPSocket::setup(const std::string& host, const int port, const size_t max_
     for (struct addrinfo* p = result; p != nullptr; p = p->ai_next)
     {
       socket_fd_ = ::socket(p->ai_family, p->ai_socktype, p->ai_protocol);
+      if (socket_fd_ == INVALID_SOCKET)
+      {
+        continue;
+      }
 
-      if (socket_fd_ != -1 && open(socket_fd_, p->ai_addr, p->ai_addrlen))
+      if (open(socket_fd_, p->ai_addr, p->ai_addrlen))
       {
         connected = true;
         break;
       }
+
+      // The connect failed. Without this close the descriptor is orphaned the
+      // moment socket_fd_ is overwritten - by the next address here, or by the
+      // next attempt of the enclosing retry loop. That is one descriptor per
+      // failed connection attempt, so a robot that stays unreachable while a
+      // client retries will exhaust the process's descriptors.
+      ::ur_close(socket_fd_);
+      socket_fd_ = INVALID_SOCKET;
     }
 
     freeaddrinfo(result);
