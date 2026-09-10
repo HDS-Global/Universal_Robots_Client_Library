@@ -22,6 +22,9 @@
 #include <chrono>
 #include "ur_client_library/comm/pipeline.h"
 #include "ur_client_library/comm/parser.h"
+#include <algorithm>
+#include <atomic>
+
 #include "ur_client_library/comm/stream.h"
 #include "ur_client_library/comm/package.h"
 #include "ur_client_library/exceptions.h"
@@ -45,7 +48,18 @@ private:
   std::chrono::seconds timeout_;
   std::function<void()> on_reconnect_cb_;
 
-  bool running_;
+  /*!
+   * \brief Connection parameters this producer was set up with, reused when the
+   * stream drops so a reconnect behaves like the initial connect.
+   */
+  size_t max_num_tries_ = 0;
+  std::chrono::milliseconds reconnection_time_ = std::chrono::seconds(10);
+
+  /*!
+   * \brief Written by stopProducer() from the thread requesting the stop and read
+   * by the producer thread, so it has to be atomic.
+   */
+  std::atomic<bool> running_;
 
   template <typename ProductT>
   bool tryGetImpl(ProductT& product)
@@ -85,9 +99,24 @@ private:
       }
 
       URCL_LOG_WARN("Failed to read from stream, reconnecting in %ld seconds...", timeout_.count());
-      std::this_thread::sleep_for(timeout_);
 
-      if (stream_.connect())
+      // Slept in slices rather than in one go: the backoff reaches 120s, and
+      // stopProducer() can only be noticed between sleeps. Waiting out a full
+      // backoff would stall Pipeline::stop(), which joins this thread.
+      const std::chrono::milliseconds slice(100);
+      for (std::chrono::milliseconds waited(0); waited < timeout_ && running_; waited += slice)
+      {
+        std::this_thread::sleep_for(std::min(slice, std::chrono::milliseconds(timeout_) - waited));
+      }
+      if (!running_)
+        return false;
+
+      // Previously called with no arguments, which meant an unlimited number of
+      // attempts 10s apart regardless of how this producer was set up. With an
+      // unreachable robot that never returned, so the producer thread could not
+      // observe running_ and Pipeline::stop() blocked forever joining it -
+      // destroying a UrDriver hung for as long as the robot stayed away.
+      if (stream_.connect(max_num_tries_, reconnection_time_))
         continue;
 
       auto next = timeout_ * 2;
@@ -119,6 +148,9 @@ public:
   void setupProducer(const size_t max_num_tries = 0,
                      const std::chrono::milliseconds reconnection_time = std::chrono::seconds(10)) override
   {
+    max_num_tries_ = max_num_tries;
+    reconnection_time_ = reconnection_time;
+
     timeval tv;
     tv.tv_sec = 1;
     tv.tv_usec = 0;
