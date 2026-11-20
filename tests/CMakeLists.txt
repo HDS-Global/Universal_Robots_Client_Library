@@ -246,6 +246,11 @@ target_link_libraries(stream_tests PRIVATE ur_client_library::urcl GTest::gtest_
 gtest_add_tests(TARGET stream_tests
 )
 
+add_executable(primary_client_reconnect_tests test_primary_client_reconnect.cpp)
+target_link_libraries(primary_client_reconnect_tests PRIVATE ur_client_library::urcl GTest::gtest)
+gtest_add_tests(TARGET primary_client_reconnect_tests
+)
+
 add_executable(producer_tests test_producer.cpp)
 target_link_libraries(producer_tests PRIVATE ur_client_library::urcl GTest::gtest_main)
 gtest_add_tests(TARGET producer_tests

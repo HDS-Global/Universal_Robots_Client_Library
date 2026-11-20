@@ -67,6 +67,13 @@ public:
    * \param primary_consumer Primary consumer that should be removed from the list
    */
   void removePrimaryConsumer(std::shared_ptr<comm::IConsumer<PrimaryPackage>> primary_consumer);
+  /*!
+   * \brief Connects the primary stream and starts the pipeline.
+   *
+   * \param max_connection_attempts Connection attempts, for the initial connection and for every
+   * reconnect, including the one sendScript() makes when a write fails. 0 means unlimited.
+   * \param reconnection_timeout Time between connection attempts.
+   */
   void start(const size_t max_connection_attempts = 0,
              const std::chrono::milliseconds reconnection_timeout = urcl::comm::TCPSocket::DEFAULT_RECONNECTION_TIME);
   void stop();
@@ -306,6 +313,10 @@ private:
   comm::INotifier notifier_;
 
   comm::URStream<PrimaryPackage> stream_;
+  // What start() was given, so reconnectStream() is bounded the same way. Set before the
+  // pipeline runs, and only read after.
+  size_t max_connection_attempts_ = 0;
+  std::chrono::milliseconds reconnection_timeout_ = urcl::comm::TCPSocket::DEFAULT_RECONNECTION_TIME;
   std::unique_ptr<comm::URProducer<PrimaryPackage>> prod_;
   std::unique_ptr<comm::Pipeline<PrimaryPackage>> pipeline_;
 
