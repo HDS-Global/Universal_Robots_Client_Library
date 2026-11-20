@@ -68,6 +68,8 @@ PrimaryClient::~PrimaryClient()
 void PrimaryClient::start(const size_t max_num_tries, const std::chrono::milliseconds reconnection_time)
 {
   URCL_LOG_INFO("Starting primary client pipeline");
+  max_connection_attempts_ = max_num_tries;
+  reconnection_timeout_ = reconnection_time;
   pipeline_->init(max_num_tries, reconnection_time);
   pipeline_->run();
 }
@@ -143,7 +145,10 @@ bool PrimaryClient::reconnectStream()
 {
   URCL_LOG_DEBUG("Closing primary stream...");
   stream_.close();
-  if (stream_.connect())
+  // Bounded like the connection start() made. Without arguments connect() retries forever,
+  // so sendScript() blocked for as long as the robot was unreachable: 18 hours on one
+  // arm whose control box was shut down, with the caller's thread stuck behind it.
+  if (stream_.connect(max_connection_attempts_, reconnection_timeout_))
   {
     URCL_LOG_DEBUG("Primary stream connected");
     return true;
